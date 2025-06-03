@@ -6,7 +6,7 @@ import re
 # Bot configuration
 TOKEN = "7079718767:AAEbXZy5Wmo8XJTPIerjPVXZFwqHBz921Go"
 # Ду админ доданд
-ADMIN_IDS = [6862331593, 6454516935, 1087968824]  # Ҳоло дар шакли массив барои бисёр админҳо
+ADMIN_IDS = [6862331593, 6454516935, 1087968824, 2436927608]  # Ҳоло дар шакли массив барои бисёр админҳо
 
 bot = telebot.TeleBot(TOKEN)
 
