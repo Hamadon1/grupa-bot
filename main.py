@@ -1,457 +1,403 @@
 import telebot
 from telebot import types
-import time
+import json
+import os
 import re
 
-# Bot configuration
-TOKEN = "7079718767:AAEbXZy5Wmo8XJTPIerjPVXZFwqHBz921Go"
-# Ду админ доданд
-ADMIN_IDS = [6862331593, 6454516935, 1087968824, 2436927608]  # Ҳоло дар шакли массив барои бисёр админҳо
+# Токени ботатон
+BOT_TOKEN = "7079718767:AAEbXZy5Wmo8XJTPIerjPVXZFwqHBz921Go"
+bot = telebot.TeleBot(BOT_TOKEN)
 
-bot = telebot.TeleBot(TOKEN)
+# Канали муқарраршуда барои истисно
+ALLOWED_CHANNEL = "@SiNamo_TAJ"
 
-# Database dictionaries (in a real application, you would use a proper database)
-groups = {}  # {group_id: group_name}
-channels = {}  # {channel_id: channel_name}
-banned_users = {}  # {user_id: unban_time}
-warning_count = {}  # {user_id: count}
-subscribed_users = {}  # {user_id: True/False} - Dictionary to track users who have confirmed subscription
-banned_words = []  # NEW: List to store banned words
+# Файлҳо барои нигоҳдории маълумот
+SETTINGS_FILE = "group_settings.json"
 
-# Regular expression for finding links in messages
-link_pattern = re.compile(r'https?://\S+|t\.me/\S+|@\S+')
-
-# Main menu for admin
-def admin_menu(chat_id):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    add_group = types.KeyboardButton("Иловаи гурӯҳ")
-    group_settings = types.KeyboardButton("Танзимоти гурӯҳ")
-    delete_group = types.KeyboardButton("Удалить гурӯҳ")
-    add_channel = types.KeyboardButton("Иловаи канал")
-    # NEW: Add banned words button
-    banned_words_btn = types.KeyboardButton("Калимаҳои манъ")
-    markup.add(add_group, group_settings, delete_group, add_channel, banned_words_btn)
-    bot.send_message(chat_id, "Интихоб кунед:", reply_markup=markup)
-
-# Start command handler
-@bot.message_handler(commands=['start'])
-def start(message):
-    if message.chat.type == 'private' and message.from_user.id in ADMIN_IDS:
-        bot.send_message(message.chat.id, "Салом! Шумо ҳамчун админ шинохта шудед.")
-        admin_menu(message.chat.id)
-    else:
-        bot.send_message(message.chat.id, "Салом! Ман боти идоракунии гурӯҳ ҳастам.")
-
-# Handler for "Иловаи гурӯҳ" (Add group)
-@bot.message_handler(func=lambda message: message.text == "Иловаи гурӯҳ" and message.from_user.id in ADMIN_IDS)
-def add_group_request(message):
-    bot.send_message(message.chat.id, "Лутфан, ботро дар гурӯҳи худ ҳамчун админ илова кунед ва линки мустақими гурӯҳро ба ман фиристед.")
-    bot.register_next_step_handler(message, process_group_link)
-
-def process_group_link(message):
-    try:
-        # Try to extract group link or ID
-        link = message.text
-        if "t.me/" in link:
-            # For simplicity, assume the link is correctly formatted
-            # In a real bot, you would have to join the group and check admin status
-            group_id = link.split("/")[-1]  # Not a real ID, just for demonstration
-            groups[group_id] = link
-            bot.send_message(message.chat.id, f"Гурӯҳ бо муваффақият илова карда шуд: {link}")
-            admin_menu(message.chat.id)
-        else:
-            bot.send_message(message.chat.id, "Линки нодуруст. Лутфан, линки мустақими гурӯҳро фиристед.")
-            bot.register_next_step_handler(message, process_group_link)
-    except Exception as e:
-        bot.send_message(message.chat.id, f"Хато рӯй дод: {str(e)}")
-        admin_menu(message.chat.id)
-
-# Handler for "Танзимоти гурӯҳ" (Group settings)
-@bot.message_handler(func=lambda message: message.text == "Танзимоти гурӯҳ" and message.from_user.id in ADMIN_IDS)
-def group_settings(message):
-    if not groups:
-        bot.send_message(message.chat.id, "Шумо ҳоло ягон гурӯҳро илова накардаед.")
-        admin_menu(message.chat.id)
-        return
+class GroupSettings:
+    def __init__(self):
+        self.load_settings()
     
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for group_id, group_name in groups.items():
-        button = types.InlineKeyboardButton(text=group_name, callback_data=f"settings_{group_id}")
-        markup.add(button)
+    def load_settings(self):
+        try:
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                self.settings = json.load(f)
+        except FileNotFoundError:
+            self.settings = {}
     
-    bot.send_message(message.chat.id, "Гурӯҳро барои танзим интихоб кунед:", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("settings_"))
-def process_group_settings(call):
-    group_id = call.data.split("_")[1]
+    def save_settings(self):
+        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(self.settings, f, ensure_ascii=False, indent=2)
     
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    btn1 = types.InlineKeyboardButton("Бехатарӣ", callback_data=f"security_{group_id}")
-    btn2 = types.InlineKeyboardButton("Филтрҳо", callback_data=f"filters_{group_id}")
-    btn3 = types.InlineKeyboardButton("Огоҳиҳо", callback_data=f"warnings_{group_id}")
-    markup.add(btn1, btn2, btn3)
+    def get_group_settings(self, group_id):
+        group_id = str(group_id)
+        if group_id not in self.settings:
+            self.settings[group_id] = {
+                'required_channels': [],
+                'banned_words': [],
+                'links_only_admin': True
+            }
+            self.save_settings()
+        return self.settings[group_id]
     
-    bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text=f"Танзимот барои гурӯҳи {groups[group_id]}:",
-        reply_markup=markup
-    )
-
-# Example handler for security settings
-@bot.callback_query_handler(func=lambda call: call.data.startswith("security_"))
-def security_settings(call):
-    group_id = call.data.split("_")[1]
-    bot.answer_callback_query(call.id, "Танзимоти бехатарӣ фаъол карда шуд!")
-    bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text=f"Танзимоти бехатарӣ барои гурӯҳи {groups[group_id]} муваффақона нигоҳ дошта шуд."
-    )
-    admin_menu(call.message.chat.id)
-
-# Handler for "Удалить гурӯҳ" (Delete group)
-@bot.message_handler(func=lambda message: message.text == "Удалить гурӯҳ" and message.from_user.id in ADMIN_IDS)
-def delete_group_request(message):
-    if not groups:
-        bot.send_message(message.chat.id, "Шумо ҳоло ягон гурӯҳро илова накардаед.")
-        admin_menu(message.chat.id)
-        return
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for group_id, group_name in groups.items():
-        button = types.InlineKeyboardButton(text=group_name, callback_data=f"delete_{group_id}")
-        markup.add(button)
-    
-    bot.send_message(message.chat.id, "Гурӯҳро барои нест кардан интихоб кунед:", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("delete_"))
-def delete_group(call):
-    group_id = call.data.split("_")[1]
-    del groups[group_id]
-    bot.answer_callback_query(call.id, "Гурӯҳ нест карда шуд!")
-    bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text="Гурӯҳ бо муваффақият нест карда шуд."
-    )
-    admin_menu(call.message.chat.id)
-
-# Handler for "Иловаи канал" (Add channel)
-@bot.message_handler(func=lambda message: message.text == "Иловаи канал" and message.from_user.id in ADMIN_IDS)
-def add_channel_request(message):
-    bot.send_message(message.chat.id, "Лутфан, ботро дар канали худ ҳамчун админ илова кунед ва номи канал ё линки мустақими каналро ба ман фиристед.")
-    bot.register_next_step_handler(message, process_channel_link)
-
-def process_channel_link(message):
-    try:
-        # Try to extract channel link or username
-        link = message.text
-        if "@" in link or "t.me/" in link:
-            # For simplicity, assume the link is correctly formatted
-            channel_id = link.replace("@", "").replace("t.me/", "")  # Not a real ID, just for demonstration
-            channels[channel_id] = link
-            bot.send_message(message.chat.id, f"Канал бо муваффақият илова карда шуд: {link}")
-            
-            # Show all added channels with delete buttons
-            show_channels(message.chat.id)
-        else:
-            bot.send_message(message.chat.id, "Линк ё номи нодуруст. Лутфан, линки мустақим ё номи каналро фиристед.")
-            bot.register_next_step_handler(message, process_channel_link)
-    except Exception as e:
-        bot.send_message(message.chat.id, f"Хато рӯй дод: {str(e)}")
-        admin_menu(message.chat.id)
-
-def show_channels(chat_id):
-    if not channels:
-        bot.send_message(chat_id, "Шумо ҳоло ягон каналро илова накардаед.")
-        admin_menu(chat_id)
-        return
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for channel_id, channel_name in channels.items():
-        button = types.InlineKeyboardButton(text=f"❌ {channel_name}", callback_data=f"delchannel_{channel_id}")
-        markup.add(button)
-    
-    bot.send_message(chat_id, "Каналҳои иловашуда (барои нест кардан пахш кунед):", reply_markup=markup)
-    admin_menu(chat_id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("delchannel_"))
-def delete_channel(call):
-    channel_id = call.data.split("_")[1]
-    del channels[channel_id]
-    bot.answer_callback_query(call.id, "Канал нест карда шуд!")
-    
-    # Update the message with the new list of channels
-    if not channels:
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text="Ҳамаи каналҳо нест карда шуданд."
-        )
-    else:
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for ch_id, ch_name in channels.items():
-            button = types.InlineKeyboardButton(text=f"❌ {ch_name}", callback_data=f"delchannel_{ch_id}")
-            markup.add(button)
-        
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text="Каналҳои иловашуда (барои нест кардан пахш кунед):",
-            reply_markup=markup
-        )
-
-# NEW: Handler for "Калимаҳои манъ" (Banned words)
-@bot.message_handler(func=lambda message: message.text == "Калимаҳои манъ" and message.from_user.id in ADMIN_IDS)
-def banned_words_menu(message):
-    bot.send_message(message.chat.id, "Лутфан, калимаҳо ё ҷумлаҳои манъшударо ба ман фиристед. Ҳар як калима ё ҷумла дар як сатр навишта шавад.")
-    bot.register_next_step_handler(message, process_banned_words)
-
-def process_banned_words(message):
-    global banned_words
-    new_words = message.text.split('\n')
-    banned_words.extend([word.strip() for word in new_words if word.strip()])
-    
-    # Remove duplicates
-    banned_words = list(set(banned_words))
-    
-    # Show the list of banned words
-    words_text = '\n'.join([f"• {word}" for word in banned_words]) if banned_words else "Рӯйхат холӣ аст."
-    bot.send_message(message.chat.id, f"Рӯйхати калимаҳои манъшуда:\n{words_text}")
-    
-    # Add buttons to manage banned words
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    add_more = types.InlineKeyboardButton("Илова кардани калимаҳои дигар", callback_data="add_more_words")
-    clear_all = types.InlineKeyboardButton("Тоза кардани рӯйхат", callback_data="clear_banned_words")
-    markup.add(add_more, clear_all)
-    
-    bot.send_message(message.chat.id, "Амалиётро интихоб кунед:", reply_markup=markup)
-    admin_menu(message.chat.id)
-
-@bot.callback_query_handler(func=lambda call: call.data == "add_more_words")
-def add_more_banned_words(call):
-    bot.answer_callback_query(call.id)
-    bot.send_message(call.message.chat.id, "Лутфан, калимаҳои иловагии манъшударо фиристед. Ҳар як калима дар як сатр навишта шавад.")
-    bot.register_next_step_handler(call.message, process_banned_words)
-
-@bot.callback_query_handler(func=lambda call: call.data == "clear_banned_words")
-def clear_banned_words(call):
-    global banned_words
-    banned_words = []
-    bot.answer_callback_query(call.id, "Рӯйхати калимаҳои манъшуда тоза карда шуд!")
-    bot.send_message(call.message.chat.id, "Рӯйхати калимаҳои манъшуда тоза карда шуд.")
-    admin_menu(call.message.chat.id)
-
-# Check if a user is subscribed to the channel
-def check_user_subscription(user_id, chat_id):
-    # Check if the user is already marked as subscribed
-    if user_id in subscribed_users and subscribed_users[user_id]:
-        return True
-    
-    # Check if the user is an admin of the group (admins don't need to subscribe)
-    try:
-        admins = bot.get_chat_administrators(chat_id)
-        admin_ids = [admin.user.id for admin in admins]
-        if user_id in admin_ids or user_id in ADMIN_IDS:  # Changed to check ADMIN_IDS array
+    def add_required_channel(self, group_id, channel):
+        group_settings = self.get_group_settings(group_id)
+        if channel not in group_settings['required_channels']:
+            group_settings['required_channels'].append(channel)
+            self.save_settings()
             return True
-    except Exception:
-        pass  # If any error occurs while checking admins, continue with subscription check
-    
-    # In a real implementation, you would check each channel subscription:
-    # For each channel, use bot.get_chat_member(channel_id, user_id) 
-    # and check if status is not 'left' or 'kicked'
-    
-    # For this example, we'll just use the stored subscription status
-    return False
-
-# NEW: Check if a message contains banned words
-def contains_banned_word(text):
-    if not text or not banned_words:
         return False
     
-    text_lower = text.lower()
-    for word in banned_words:
-        if word.lower() in text_lower:
+    def remove_required_channel(self, group_id, channel):
+        group_settings = self.get_group_settings(group_id)
+        if channel in group_settings['required_channels']:
+            group_settings['required_channels'].remove(channel)
+            self.save_settings()
             return True
+        return False
     
-    return False
+    def add_banned_word(self, group_id, word):
+        group_settings = self.get_group_settings(group_id)
+        if word.lower() not in group_settings['banned_words']:
+            group_settings['banned_words'].append(word.lower())
+            self.save_settings()
+            return True
+        return False
+    
+    def remove_banned_word(self, group_id, word):
+        group_settings = self.get_group_settings(group_id)
+        if word.lower() in group_settings['banned_words']:
+            group_settings['banned_words'].remove(word.lower())
+            self.save_settings()
+            return True
+        return False
 
-# Message handler for group chats
-@bot.message_handler(func=lambda message: message.chat.type in ['group', 'supergroup'])
-def handle_group_message(message):
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    
-    # Check if user is banned
-    if user_id in banned_users:
-        if time.time() < banned_users[user_id]:
-            # User is still banned
-            bot.delete_message(chat_id, message.message_id)
-            return
-        else:
-            # Ban time is over
-            del banned_users[user_id]
-    
-    # Check if the user is an admin of the group
+settings = GroupSettings()
+
+def is_admin(user_id, chat_id):
+    """Санҷиши администратор будани корбар"""
     try:
-        admins = bot.get_chat_administrators(chat_id)
-        admin_ids = [admin.user.id for admin in admins]
-        is_admin = user_id in admin_ids or user_id in ADMIN_IDS
-    except Exception:
-        # If we can't get admins, assume the user is not an admin
-        is_admin = user_id in ADMIN_IDS
-    
-    # NEW: Check for banned words in the message
-    if not is_admin and message.text and contains_banned_word(message.text):
-        # Delete message with banned word
-        bot.delete_message(chat_id, message.message_id)
-        
-        # Send warning
-        warning_msg = bot.send_message(
-            chat_id,
-            f"⚠️ @{message.from_user.username or user_id}, истифодаи калимаҳои манъшуда дар гурӯҳ қатъӣ манъ аст!"
-        )
-        return
-    
-    # Check for links in the message
-    if not is_admin and message.text and link_pattern.search(message.text):
-        # Delete message with link
-        bot.delete_message(chat_id, message.message_id)
-        
-        # Increase warning count
-        if user_id not in warning_count:
-            warning_count[user_id] = 0
-        warning_count[user_id] += 1
-        
-        # Send warning message
-        warning_msg = bot.send_message(
-            chat_id,
-            f"⚠️ @{message.from_user.username or user_id}, дар гурӯҳ фиристодани реклама манъ аст! Огоҳӣ {warning_count[user_id]}/3"
-        )
-        
-        # Ban user if they reached 3 warnings
-        if warning_count[user_id] >= 3:
-            # Ban for 1 hour
-            ban_time = time.time() + 3600  # Current time + 1 hour in seconds
-            banned_users[user_id] = ban_time
-            
-            try:
-                bot.restrict_chat_member(
-                    chat_id, 
-                    user_id,
-                    until_date=ban_time,
-                    permissions=types.ChatPermissions(
-                        can_send_messages=False,
-                        can_send_media_messages=False,
-                        can_send_other_messages=False
-                    )
-                )
-                bot.send_message(
-                    chat_id,
-                    f"🚫 @{message.from_user.username or user_id} ба муддати 1 соат аз фиристодани паём маҳрум карда шуд."
-                )
-            except Exception as e:
-                bot.send_message(
-                    chat_id,
-                    f"Хато ҳангоми маҳрум кардани корбар: {str(e)}"
-                )
-            
-            # Reset warning count
-            warning_count[user_id] = 0
-        return
-    
-    # Check if the user is subscribed to the required channels
-    subscribed = check_user_subscription(user_id, chat_id)
-    
-    if not subscribed and not is_admin and channels:
-        # Delete the message
-        bot.delete_message(chat_id, message.message_id)
-        
-        # Create subscription buttons
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for channel_id, channel_name in channels.items():
-            channel_button = types.InlineKeyboardButton(text=f"📢 {channel_name}", url=f"https://t.me/{channel_id}")
-            markup.add(channel_button)
-            
-        check_button = types.InlineKeyboardButton(text="✅ Санҷиш", callback_data=f"check_{user_id}_{chat_id}")
-        markup.add(check_button)
-        
-        # Send subscription requirement message
-        bot.send_message(
-            chat_id,
-            f"@{message.from_user.username or user_id}, барои навиштан дар гурӯҳ, лутфан ба каналҳои зерин обуна шавед:",
-            reply_markup=markup
-        )
+        chat_member = bot.get_chat_member(chat_id, user_id)
+        return chat_member.status in ['administrator', 'creator']
+    except:
+        return False
 
-# Handler for subscription check button
-@bot.callback_query_handler(func=lambda call: call.data.startswith("check_"))
-def check_subscription(call):
-    parts = call.data.split("_")
-    user_id = int(parts[1])
-    chat_id = int(parts[2]) if len(parts) > 2 else call.message.chat.id
-    
-    # Only the user who needs to subscribe can use this button
-    if call.from_user.id != user_id:
-        bot.answer_callback_query(
-            call.id,
-            "Ин тугма барои шумо нест!",
-            show_alert=True
-        )
-        return
-    
-    # Real subscription check implementation
-    # In a real bot, you would check each channel like this:
-    all_subscribed = True
-    not_subscribed_channels = []
-    
-    for channel_id, channel_name in channels.items():
+def check_subscription(user_id, channels):
+    """Санҷиши обуна будан дар каналҳо"""
+    for channel in channels:
         try:
-            # Get the channel chat info
-            chat_info = None
-            try:
-                # Try with @ format
-                chat_info = bot.get_chat(f"@{channel_id}")
-            except Exception:
-                try:
-                    # Try with -100 format for supergroups/channels
-                    if not channel_id.startswith("-100"):
-                        chat_info = bot.get_chat(f"-100{channel_id}")
-                except Exception:
-                    pass
-            
-            if chat_info:
-                # Check if the user is a member
-                member_info = bot.get_chat_member(chat_info.id, user_id)
-                if member_info.status in ['left', 'kicked']:
-                    all_subscribed = False
-                    not_subscribed_channels.append(channel_name)
-        except Exception as e:
-            # If we can't check, assume not subscribed
-            all_subscribed = False
-            not_subscribed_channels.append(channel_name)
-    
-    # For demonstration, we'll just assume the user is now subscribed
-    # In a real implementation, you'd use the above code to check each channel
-    all_subscribed = True
-    
-    if all_subscribed:
-        # Mark the user as subscribed in our dictionary
-        subscribed_users[user_id] = True
-        
-        bot.answer_callback_query(
-            call.id,
-            "Ташаккур барои обуна! Акнун шумо метавонед дар гурӯҳ паём фиристед.",
-            show_alert=True
-        )
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    else:
-        # Get the list of channels the user hasn't subscribed to
-        bot.answer_callback_query(
-            call.id,
-            f"Шумо ҳоло ба ҳамаи каналҳо обуна нашудаед. Лутфан, обуна шавед ва боз санҷед.",
-            show_alert=True
-        )
+            member = bot.get_chat_member(channel, user_id)
+            if member.status in ['left', 'kicked']:
+                return False, channel
+        except:
+            return False, channel
+    return True, None
 
-# Run the bot
-bot.infinity_polling()
+def contains_link(text):
+    """Санҷиши мавҷудияти линк дар матн"""
+    url_pattern = re.compile(
+        r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+        r'|(?:^|[^@\w])@[a-zA-Z0-9_]{1,15}(?![a-zA-Z0-9_])'
+        r'|(?:^|[^@\w])t\.me/[a-zA-Z0-9_]{1,32}'
+    )
+    return bool(url_pattern.search(text))
+
+def is_from_allowed_channel(text):
+    """Санҷиши линк аз канали иҷозатдодашуда"""
+    return ALLOWED_CHANNEL.lower() in text.lower()
+
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    if message.chat.type != 'private':
+        return
+    
+    help_text = """
+🤖 Боти идоракунии гурӯҳ
+
+Фармонҳои админ:
+/add_channel @channel - Илова кардани канал барои обуна
+/remove_channel @channel - Хориҷ кардани канал
+/list_channels - Рӯйхати каналҳо
+/add_word калима - Илова кардани калимаи мамнӯъ
+/remove_word калима - Хориҷ кардани калимаи мамнӯъ
+/list_words - Рӯйхати калимаҳои мамнӯъ
+
+Хусусиятҳо:
+✅ Санҷиши обуна дар каналҳо
+✅ Филтри калимаҳои мамнӯъ
+✅ Маҳдудияти линк барои ғайриадминҳо
+✅ Истиснои канали @VOLFHA
+    """
+    bot.reply_to(message, help_text)
+
+@bot.message_handler(commands=['add_channel'])
+def add_channel(message):
+    if not is_admin(message.from_user.id, message.chat.id):
+        bot.reply_to(message, "❌ Танҳо администраторҳо ин фармонро истифода бурда метавонанд!")
+        return
+    
+    try:
+        channel = message.text.split()[1]
+        if not channel.startswith('@'):
+            channel = '@' + channel
+        
+        if settings.add_required_channel(message.chat.id, channel):
+            bot.reply_to(message, f"✅ Канали {channel} илова карда шуд!")
+        else:
+            bot.reply_to(message, f"⚠️ Канали {channel} аллакай дар рӯйхат аст!")
+    except IndexError:
+        bot.reply_to(message, "❌ Истифода: /add_channel @channel_name")
+
+@bot.message_handler(commands=['remove_channel'])
+def remove_channel(message):
+    if not is_admin(message.from_user.id, message.chat.id):
+        bot.reply_to(message, "❌ Танҳо администраторҳо ин фармонро истифода бурда метавонанд!")
+        return
+    
+    try:
+        channel = message.text.split()[1]
+        if not channel.startswith('@'):
+            channel = '@' + channel
+        
+        if settings.remove_required_channel(message.chat.id, channel):
+            bot.reply_to(message, f"✅ Канали {channel} хориҷ карда шуд!")
+        else:
+            bot.reply_to(message, f"⚠️ Канали {channel} дар рӯйхат нест!")
+    except IndexError:
+        bot.reply_to(message, "❌ Истифода: /remove_channel @channel_name")
+
+@bot.message_handler(commands=['list_channels'])
+def list_channels(message):
+    if not is_admin(message.from_user.id, message.chat.id):
+        bot.reply_to(message, "❌ Танҳо администраторҳо ин фармонро истифода бурда метавонанд!")
+        return
+    
+    group_settings = settings.get_group_settings(message.chat.id)
+    channels = group_settings['required_channels']
+    
+    if channels:
+        channels_text = "\n".join([f"• {channel}" for channel in channels])
+        bot.reply_to(message, f"📋 Каналҳои талабшуда:\n{channels_text}")
+    else:
+        bot.reply_to(message, "📋 Ягон канал танзим нашудааст!")
+
+@bot.message_handler(commands=['add_word'])
+def add_banned_word(message):
+    if not is_admin(message.from_user.id, message.chat.id):
+        bot.reply_to(message, "❌ Танҳо администраторҳо ин фармонро истифода бурда метавонанд!")
+        return
+    
+    try:
+        word = ' '.join(message.text.split()[1:])
+        if not word:
+            raise IndexError
+        
+        if settings.add_banned_word(message.chat.id, word):
+            bot.reply_to(message, f"✅ Калимаи '{word}' ба рӯйхати мамнӯъ илова карда шуд!")
+        else:
+            bot.reply_to(message, f"⚠️ Калимаи '{word}' аллакай дар рӯйхат аст!")
+    except IndexError:
+        bot.reply_to(message, "❌ Истифода: /add_word калимаи мамнӯъ")
+
+@bot.message_handler(commands=['remove_word'])
+def remove_banned_word(message):
+    if not is_admin(message.from_user.id, message.chat.id):
+        bot.reply_to(message, "❌ Танҳо администраторҳо ин фармонро истифода бурда метавонанд!")
+        return
+    
+    try:
+        word = ' '.join(message.text.split()[1:])
+        if not word:
+            raise IndexError
+        
+        if settings.remove_banned_word(message.chat.id, word):
+            bot.reply_to(message, f"✅ Калимаи '{word}' аз рӯйхати мамнӯъ хориҷ карда шуд!")
+        else:
+            bot.reply_to(message, f"⚠️ Калимаи '{word}' дар рӯйхат нест!")
+    except IndexError:
+        bot.reply_to(message, "❌ Истифода: /remove_word калимаи мамнӯъ")
+
+@bot.message_handler(commands=['list_words'])
+def list_banned_words(message):
+    if not is_admin(message.from_user.id, message.chat.id):
+        bot.reply_to(message, "❌ Танҳо администраторҳо ин фармонро истифода бурда метавонанд!")
+        return
+    
+    group_settings = settings.get_group_settings(message.chat.id)
+    words = group_settings['banned_words']
+    
+    if words:
+        words_text = "\n".join([f"• {word}" for word in words])
+        bot.reply_to(message, f"🚫 Калимаҳои мамнӯъ:\n{words_text}")
+    else:
+        bot.reply_to(message, "🚫 Ягон калимаи мамнӯъ танзим нашудааст!")
+
+@bot.message_handler(content_types=['text'])
+def handle_text_message(message):
+    # Танҳо дар гурӯҳҳо кор мекунад
+    if message.chat.type == 'private':
+        return
+    
+    # Администраторҳоро санҷиш намекунем
+    if is_admin(message.from_user.id, message.chat.id):
+        return
+    
+    group_settings = settings.get_group_settings(message.chat.id)
+    message_text = message.text.lower()
+    
+    # Санҷиши обуна дар каналҳо
+    required_channels = group_settings['required_channels']
+    if required_channels:
+        subscribed, missing_channel = check_subscription(message.from_user.id, required_channels)
+        if not subscribed:
+            try:
+                bot.delete_message(message.chat.id, message.message_id)
+                warning_msg = bot.send_message(
+                    message.chat.id,
+                    f"⚠️ @{message.from_user.username or message.from_user.first_name}, "
+                    f"шумо барои фиристодани паём бояд ба канали {missing_channel} обуна шавед!"
+                )
+                # Хориҷ кардани паёми ҳушдор баъд аз 10 сония
+                bot.delete_message(message.chat.id, warning_msg.message_id)
+            except:
+                pass
+            return
+    
+    # Санҷиши калимаҳои мамнӯъ
+    banned_words = group_settings['banned_words']
+    for word in banned_words:
+        if word in message_text:
+            try:
+                bot.delete_message(message.chat.id, message.message_id)
+                warning_msg = bot.send_message(
+                    message.chat.id,
+                    f"⚠️ @{message.from_user.username or message.from_user.first_name}, "
+                    f"истифодаи ин калима мамнӯъ аст!"
+                )
+                # Хориҷ кардани паёми ҳушдор баъд аз 5 сония
+                import time
+                import threading
+                def delete_warning():
+                    time.sleep(5)
+                    try:
+                        bot.delete_message(message.chat.id, warning_msg.message_id)
+                    except:
+                        pass
+                threading.Thread(target=delete_warning).start()
+            except:
+                pass
+            return
+    
+    # Санҷиши линкҳо
+    if contains_link(message.text):
+        # Агар аз канали иҷозатдодашуда бошад, иҷозат диҳед
+        if is_from_allowed_channel(message.text):
+            return
+        
+        # Дар غайр ҳол линкро нест кунед
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+            warning_msg = bot.send_message(
+                message.chat.id,
+                f"⚠️ @{message.from_user.username or message.from_user.first_name}, "
+                f"танҳо администраторҳо линк фиристода метавонанд!"
+            )
+            # Хориҷ кардани паёми ҳушдор баъд аз 5 сония
+            import time
+            import threading
+            def delete_warning():
+                time.sleep(5)
+                try:
+                    bot.delete_message(message.chat.id, warning_msg.message_id)
+                except:
+                    pass
+            threading.Thread(target=delete_warning).start()
+        except:
+            pass
+
+@bot.message_handler(content_types=['new_chat_members'])
+def welcome_new_members(message):
+    """Паёми хӯш омадед барои аъзоёни нав"""
+    if message.chat.type == 'private':
+        return
+    
+    for new_member in message.new_chat_members:
+        # Агар худи бот илова карда шуда бошад
+        if new_member.id == bot.get_me().id:
+            bot.send_message(
+                message.chat.id,
+                "🤖 Салом! Ман боти идоракунии гурӯҳ ҳастам.\n"
+                "Администраторҳо метавонанд аз фармонҳои ман истифода баранд.\n"
+                "Барои кӯмак /help-ро дар паёми хусусӣ фиристед."
+            )
+            continue
+        
+        # Паёми хӯш омадед барои корбарони нав
+        name = new_member.first_name
+        username = f"@{new_member.username}" if new_member.username else name
+        
+        welcome_text = f"🎉 Хӯш омадед, {username}!\n\n"
+        
+        # Агар каналҳои талабшуда мавҷуд бошанд
+        group_settings = settings.get_group_settings(message.chat.id)
+        required_channels = group_settings['required_channels']
+        
+        if required_channels:
+            welcome_text += "📢 Барои иштирок дар муҳокимаҳо, лутфан ба каналҳои зерин обуна шавед:\n"
+            for channel in required_channels:
+                welcome_text += f"• {channel}\n"
+            welcome_text += "\n"
+        
+        welcome_text += "📋 Қоидаҳои гурӯҳро мутолиа кунед ва муҳтарам нигоҳ доред!"
+        
+        # Фиристодани паёми хӯш омадед
+        try:
+            welcome_msg = bot.send_message(message.chat.id, welcome_text)
+            
+            # Хориҷ кардани паёми хӯш омадед баъд аз 2 дақиқа (120 сония)
+            import time
+            import threading
+            def delete_welcome():
+                time.sleep(120)
+                try:
+                    bot.delete_message(message.chat.id, welcome_msg.message_id)
+                except:
+                    pass
+            threading.Thread(target=delete_welcome).start()
+        except:
+            pass
+
+@bot.message_handler(content_types=['photo', 'video', 'document', 'audio', 'voice', 'sticker'])
+def handle_media_message(message):
+    # Танҳо дар гурӯҳҳо кор мекунад
+    if message.chat.type == 'private':
+        return
+    
+    # Администраторҳоро санҷиш намекунем
+    if is_admin(message.from_user.id, message.chat.id):
+        return
+    
+    group_settings = settings.get_group_settings(message.chat.id)
+    
+    # Санҷиши обуна дар каналҳо
+    required_channels = group_settings['required_channels']
+    if required_channels:
+        subscribed, missing_channel = check_subscription(message.from_user.id, required_channels)
+        if not subscribed:
+            try:
+                bot.delete_message(message.chat.id, message.message_id)
+                warning_msg = bot.send_message(
+                    message.chat.id,
+                    f"⚠️ @{message.from_user.username or message.from_user.first_name}, "
+                    f"шумо барои фиристодани паём бояд ба канали {missing_channel} обуна шавед!"
+                )
+            except:
+                pass
+
+if __name__ == "__main__":
+    print("🤖 Бот оғоз ёфт...")
+    try:
+        bot.polling(none_stop=True)
+    except Exception as e:
+        print(f"Хатогӣ: {e}")
+        bot.polling(none_stop=True)
