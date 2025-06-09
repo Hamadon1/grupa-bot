@@ -5,11 +5,11 @@ import os
 import re
 
 # Токени ботатон
-BOT_TOKEN = "7079718767:AAEbXZy5Wmo8XJTPIerjPVXZFwqHBz921Go"
+BOT_TOKEN = "7960045546:AAFn1nCugQ1WqPxg0EfGS16vuSV9ad9xKM4"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # Канали муқарраршуда барои истисно
-ALLOWED_CHANNEL = "@SiNamo_TAJ"
+ALLOWED_CHANNEL = "@VOLFHA"
 
 # Файлҳо барои нигоҳдории маълумот
 SETTINGS_FILE = "group_settings.json"
